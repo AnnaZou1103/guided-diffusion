@@ -4,4 +4,4 @@ classify_image_graph_def.pb
 results/
 models/
 docs/
-.idea
+.idea/
