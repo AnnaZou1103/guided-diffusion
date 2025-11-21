@@ -4,9 +4,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
-#SBATCH --time=48:00:00
-#SBATCH --output=artbench_train_%j.out
+#SBATCH --mem=64G
+#SBATCH --time=2:00:00
 #SBATCH --error=artbench_train_%j.err
 #SBATCH --gres=gpu:1
 
@@ -16,7 +15,7 @@
 
 module load anaconda3
 module load cuda/12.1.1
-
+eval "$(conda shell.bash hook)"
 conda activate diffusion
 
 export OMPI_MCA_mtl=^ofi
@@ -24,16 +23,25 @@ export OMPI_MCA_pml=ob1
 export OMPI_MCA_btl=self,tcp
 
 # Style name (passed as argument, uses default if not provided)
-STYLE_NAME=${1:-"impressionism"}
+STYLE_NAME=${1:-"surrealism"}
 
 # Configuration paths
 ARTBENCH_IMAGES_DIR="${2:-./artbench_images}"  # ArtBench images directory
 PRETRAINED_MODEL="${3:-models/lsun_bedroom.pt}"  # Pretrained model path
 
-export OPENAI_LOGDIR=./logs/artbench_${STYLE_NAME}
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+export OPENAI_LOGDIR="${PROJECT_ROOT}/logs/artbench_${STYLE_NAME}"
 
-# Fine-tuning parameters: start from pretrained model with smaller learning rate
-TRAIN_FLAGS="--iterations 200000 --anneal_lr True --batch_size 32 --lr 5e-5 --save_interval 10000 --weight_decay 0.0 --log_interval 10"
+export OPENAI_LOG_FORMAT="stdout,log,csv"
+export OPENAI_LOG_FORMAT_MPI="stdout,log,csv"
+
+mkdir -p "$OPENAI_LOGDIR"
+chmod 755 "$OPENAI_LOGDIR"
+
+# Fine-tuning parameters: Reduce save interval to ensure at least one save within 2 hours
+# Assuming ~5000 steps can be trained in 2 hours, set save_interval to 2000 steps (safe)
+TRAIN_FLAGS="--lr_anneal_steps 200000 --batch_size 16 --microbatch 8 --lr 5e-5 --save_interval 2000 --weight_decay 0.0 --log_interval 10"
 
 # Model parameters: unconditional model (same as LSUN)
 MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond False --diffusion_steps 1000 --dropout 0.1 --image_size 256 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True"
@@ -48,13 +56,29 @@ if [ ! -d "$DATA_DIR" ]; then
     exit 1
 fi
 
-# Check if pretrained model exists
-if [ ! -f "$PRETRAINED_MODEL" ]; then
-    echo "Warning: Pretrained model not found: $PRETRAINED_MODEL"
-    echo "Training from scratch instead..."
-    RESUME_CHECKPOINT=""
+# Automatically find latest checkpoint
+LATEST_CHECKPOINT=""
+if [ -d "$OPENAI_LOGDIR" ]; then
+    # Find latest model*.pt file
+    LATEST_CHECKPOINT=$(ls -t "$OPENAI_LOGDIR"/model*.pt 2>/dev/null | head -n 1)
+fi
+
+# If checkpoint found, use it; otherwise use pretrained model
+if [ -n "$LATEST_CHECKPOINT" ] && [ -f "$LATEST_CHECKPOINT" ]; then
+    RESUME_CHECKPOINT="--resume_checkpoint $LATEST_CHECKPOINT"
+    # Extract step number from filename
+    CHECKPOINT_STEP=$(basename "$LATEST_CHECKPOINT" | sed 's/model//; s/.pt//' | grep -o '[0-9]*' || echo "0")
+    echo "Found latest checkpoint: $LATEST_CHECKPOINT"
+    echo "Resuming from step: $CHECKPOINT_STEP"
 else
-    RESUME_CHECKPOINT="--resume_checkpoint $PRETRAINED_MODEL"
+    # If no checkpoint found, use pretrained model (if exists)
+    if [ -f "$PRETRAINED_MODEL" ]; then
+        RESUME_CHECKPOINT="--resume_checkpoint $PRETRAINED_MODEL"
+        echo "No checkpoint found, using pretrained model: $PRETRAINED_MODEL"
+    else
+        RESUME_CHECKPOINT=""
+        echo "Warning: No checkpoint or pretrained model found, training from scratch"
+    fi
 fi
 
 echo "=========================================="
@@ -64,12 +88,20 @@ echo "Data directory: $DATA_DIR"
 echo "Model Parameters: $MODEL_FLAGS"
 echo "Training Parameters: $TRAIN_FLAGS"
 if [ -n "$RESUME_CHECKPOINT" ]; then
-    echo "Resuming from: $PRETRAINED_MODEL"
+    echo "Resuming from: $RESUME_CHECKPOINT"
+    if [ -n "$CHECKPOINT_STEP" ]; then
+        echo "Current step: $CHECKPOINT_STEP / 200000"
+    fi
 else
     echo "Training from scratch"
 fi
 echo "Log directory: $OPENAI_LOGDIR"
 echo ""
+
+cd "$PROJECT_ROOT"
+
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
+
 
 python scripts/image_train.py \
     --data_dir "$DATA_DIR" \
@@ -77,16 +109,51 @@ python scripts/image_train.py \
     $MODEL_FLAGS \
     $TRAIN_FLAGS
 
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "=========================================="
-    echo "Training completed for ${STYLE_NAME}!"
-    echo "Model saved in: $OPENAI_LOGDIR"
-    echo "=========================================="
+TRAIN_EXIT_CODE=$?
+
+# Check if training is completed (reached target steps)
+if [ $TRAIN_EXIT_CODE -eq 0 ]; then
+    # Check latest checkpoint step number
+    LATEST_CHECKPOINT=$(ls -t "$OPENAI_LOGDIR"/model*.pt 2>/dev/null | head -n 1)
+    if [ -n "$LATEST_CHECKPOINT" ]; then
+        LATEST_STEP=$(basename "$LATEST_CHECKPOINT" | sed 's/model//; s/.pt//' | grep -o '[0-9]*' || echo "0")
+        if [ "$LATEST_STEP" -ge 200000 ]; then
+            echo ""
+            echo "=========================================="
+            echo "Training completed for ${STYLE_NAME}!"
+            echo "Final step: $LATEST_STEP / 200000"
+            echo "Model saved in: $OPENAI_LOGDIR"
+            echo "=========================================="
+            exit 0
+        else
+            echo ""
+            echo "=========================================="
+            echo "Training paused (time limit reached)."
+            echo "Current step: $LATEST_STEP / 200000"
+            if command -v bc >/dev/null 2>&1; then
+                PROGRESS=$(echo "scale=2; $LATEST_STEP * 100 / 200000" | bc)
+                echo "Progress: ${PROGRESS}%"
+            else
+                PROGRESS=$(( $LATEST_STEP * 100 / 200000 ))
+                echo "Progress: ${PROGRESS}%"
+            fi
+            echo "Please resubmit this script to continue training."
+            echo "=========================================="
+            exit 2  # Return special exit code to indicate continuation needed
+        fi
+    else
+        echo ""
+        echo "=========================================="
+        echo "Training completed for ${STYLE_NAME}!"
+        echo "Model saved in: $OPENAI_LOGDIR"
+        echo "=========================================="
+        exit 0
+    fi
 else
     echo ""
     echo "=========================================="
     echo "Training failed for ${STYLE_NAME}!"
+    echo "Exit code: $TRAIN_EXIT_CODE"
     echo "=========================================="
     exit 1
 fi
