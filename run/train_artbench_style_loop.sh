@@ -1,22 +1,83 @@
 #!/bin/bash
 # Auto-resubmit training script for ArtBench style
 # This script automatically resubmits training jobs until completion
-# Usage: bash train_artbench_style_loop.sh [style_name] [max_iterations]
-# Example: bash train_artbench_style_loop.sh surrealism 50
+# Usage: bash train_artbench_style_loop.sh [style_name] [artbench_images_dir] [max_iterations]
+# Example: bash train_artbench_style_loop.sh surrealism
+# Example: bash train_artbench_style_loop.sh surrealism /path/to/artbench_images 50
 
 STYLE_NAME=${1:-"surrealism"}
-MAX_ITERATIONS=${2:-50}  # Maximum resubmissions (about 100 hours)
+ARTBENCH_IMAGES_DIR_ARG=${2:-""}  # Optional: ArtBench images directory (if not provided, will auto-detect)
+MAX_ITERATIONS=${3:-50}  # Maximum resubmissions (about 100 hours)
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# Get project root from current working directory (assumes running from project root)
+# When using sbatch, the working directory is preserved
+PROJECT_ROOT="$(pwd)"
+SCRIPT_DIR="${PROJECT_ROOT}/run"
+
+# Verify script directory exists
+if [ ! -d "$SCRIPT_DIR" ] || [ ! -f "$SCRIPT_DIR/train_artbench_style.sh" ]; then
+    echo "Error: Cannot find train_artbench_style.sh in $SCRIPT_DIR"
+    echo "Current directory: $PROJECT_ROOT"
+    echo "Please run from project root directory: cd /path/to/guided-diffusion && sbatch run/train_artbench_style_loop.sh"
+    exit 1
+fi
+
 LOG_DIR="${PROJECT_ROOT}/logs/artbench_${STYLE_NAME}"
 TARGET_STEPS=200000
+
+# Determine dataset directory (use absolute path)
+# If provided as argument, use it; otherwise auto-detect
+if [ -n "$ARTBENCH_IMAGES_DIR_ARG" ]; then
+    # Use provided path (convert to absolute if relative)
+    if [[ "$ARTBENCH_IMAGES_DIR_ARG" = /* ]]; then
+        ARTBENCH_IMAGES_DIR="$ARTBENCH_IMAGES_DIR_ARG"
+    else
+        ARTBENCH_IMAGES_DIR="$(cd "$ARTBENCH_IMAGES_DIR_ARG" && pwd 2>/dev/null || echo "${PROJECT_ROOT}/${ARTBENCH_IMAGES_DIR_ARG}")"
+    fi
+else
+    # Auto-detect: Try common locations (prioritize datasets/artbench_images)
+    if [ -d "${PROJECT_ROOT}/datasets/artbench_images" ]; then
+        ARTBENCH_IMAGES_DIR="${PROJECT_ROOT}/datasets/artbench_images"
+    elif [ -d "${PROJECT_ROOT}/artbench_images" ]; then
+        ARTBENCH_IMAGES_DIR="${PROJECT_ROOT}/artbench_images"
+    elif [ -d "./datasets/artbench_images" ]; then
+        ARTBENCH_IMAGES_DIR="$(cd ./datasets/artbench_images && pwd)"
+    elif [ -d "./artbench_images" ]; then
+        ARTBENCH_IMAGES_DIR="$(cd ./artbench_images && pwd)"
+    else
+        # Use default: datasets/artbench_images
+        ARTBENCH_IMAGES_DIR="${PROJECT_ROOT}/datasets/artbench_images"
+    fi
+fi
+
+# Verify dataset directory exists
+if [ ! -d "$ARTBENCH_IMAGES_DIR" ]; then
+    echo "Error: ArtBench images directory not found: $ARTBENCH_IMAGES_DIR"
+    echo "Please run convert_artbench_lsun.sh first to convert LSUN format to images."
+    echo "Or set ARTBENCH_IMAGES_DIR environment variable."
+    exit 1
+fi
+
+# Verify style directory exists
+STYLE_DATA_DIR="${ARTBENCH_IMAGES_DIR}/${STYLE_NAME}"
+if [ ! -d "$STYLE_DATA_DIR" ]; then
+    echo "Error: Style data directory not found: $STYLE_DATA_DIR"
+    echo "Available styles in $ARTBENCH_IMAGES_DIR:"
+    ls -d "$ARTBENCH_IMAGES_DIR"/*/ 2>/dev/null | sed 's|.*/||' | sed 's|/$||' || echo "No styles found"
+    exit 1
+fi
+
+# Pretrained model path
+PRETRAINED_MODEL="${PROJECT_ROOT}/models/lsun_bedroom.pt"
 
 echo "=========================================="
 echo "Auto-resubmit Training: ${STYLE_NAME}"
 echo "Target steps: ${TARGET_STEPS}"
 echo "Max iterations: ${MAX_ITERATIONS}"
 echo "Log directory: ${LOG_DIR}"
+echo "Dataset directory: ${ARTBENCH_IMAGES_DIR}"
+echo "Style data directory: ${STYLE_DATA_DIR}"
+echo "Pretrained model: ${PRETRAINED_MODEL}"
 echo "=========================================="
 
 # Ensure log directory exists
@@ -59,7 +120,18 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
     # Submit job
     echo ""
     echo "Submitting training job..."
-    JOB_ID=$(sbatch --parsable "$SCRIPT_DIR/train_artbench_style.sh" "$STYLE_NAME")
+    echo "Script directory: $SCRIPT_DIR"
+    echo "Training script: $SCRIPT_DIR/train_artbench_style.sh"
+    
+    # Use absolute path for sbatch to avoid SLURM temp directory issues
+    TRAIN_SCRIPT_PATH="${SCRIPT_DIR}/train_artbench_style.sh"
+    if [ ! -f "$TRAIN_SCRIPT_PATH" ]; then
+        echo "Error: Training script not found: $TRAIN_SCRIPT_PATH"
+        exit 1
+    fi
+    
+    # Pass style_name, dataset_dir, and pretrained_model to train_artbench_style.sh
+    JOB_ID=$(sbatch --parsable "$TRAIN_SCRIPT_PATH" "$STYLE_NAME" "$ARTBENCH_IMAGES_DIR" "$PRETRAINED_MODEL")
     
     if [ $? -ne 0 ] || [ -z "$JOB_ID" ]; then
         echo "Error: Failed to submit job!"

@@ -25,12 +25,37 @@ export OMPI_MCA_btl=self,tcp
 # Style name (passed as argument, uses default if not provided)
 STYLE_NAME=${1:-"surrealism"}
 
-# Configuration paths
-ARTBENCH_IMAGES_DIR="${2:-./artbench_images}"  # ArtBench images directory
-PRETRAINED_MODEL="${3:-models/lsun_bedroom.pt}"  # Pretrained model path
+# Get project root from current working directory (assumes running from project root)
+# When using sbatch, the working directory is preserved
+PROJECT_ROOT="$(pwd)"
+SCRIPT_DIR="${PROJECT_ROOT}/run"
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# Configuration paths
+# Convert relative paths to absolute paths
+if [ -n "$2" ]; then
+    # Use provided path (convert to absolute if relative)
+    if [[ "$2" = /* ]]; then
+        ARTBENCH_IMAGES_DIR="$2"
+    else
+        ARTBENCH_IMAGES_DIR="$(cd "$2" && pwd 2>/dev/null || echo "${PROJECT_ROOT}/$2")"
+    fi
+else
+    # Default: use datasets/artbench_images
+    ARTBENCH_IMAGES_DIR="${PROJECT_ROOT}/datasets/artbench_images"
+fi
+
+if [ -n "$3" ]; then
+    # Use provided pretrained model path (convert to absolute if relative)
+    if [[ "$3" = /* ]]; then
+        PRETRAINED_MODEL="$3"
+    else
+        PRETRAINED_MODEL="$(cd "$(dirname "$3")" && pwd)/$(basename "$3" 2>/dev/null || echo "${PROJECT_ROOT}/$3")"
+    fi
+else
+    # Default: use project root relative path
+    PRETRAINED_MODEL="${PROJECT_ROOT}/models/lsun_bedroom.pt"
+fi
+
 export OPENAI_LOGDIR="${PROJECT_ROOT}/logs/artbench_${STYLE_NAME}"
 
 export OPENAI_LOG_FORMAT="stdout,log,csv"
