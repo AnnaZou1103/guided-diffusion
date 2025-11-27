@@ -128,13 +128,18 @@ cd "$PROJECT_ROOT"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
 
 
+# Run training with error capture
 python scripts/image_train.py \
     --data_dir "$DATA_DIR" \
     $RESUME_CHECKPOINT \
     $MODEL_FLAGS \
-    $TRAIN_FLAGS
+    $TRAIN_FLAGS 2>&1 | tee "${OPENAI_LOGDIR}/training_output.log"
 
 TRAIN_EXIT_CODE=$?
+
+# Log exit code
+echo "" >> "${OPENAI_LOGDIR}/training_output.log"
+echo "Training script exited with code: $TRAIN_EXIT_CODE" >> "${OPENAI_LOGDIR}/training_output.log"
 
 # Check if training is completed (reached target steps)
 if [ $TRAIN_EXIT_CODE -eq 0 ]; then
@@ -180,6 +185,17 @@ else
     echo "Training failed for ${STYLE_NAME}!"
     echo "Exit code: $TRAIN_EXIT_CODE"
     echo "=========================================="
-    exit 1
+    echo ""
+    echo "Error details:"
+    echo "  - Check training log: ${OPENAI_LOGDIR}/training_output.log"
+    echo "  - Check training progress: ${OPENAI_LOGDIR}/log.txt"
+    echo "  - Check progress CSV: ${OPENAI_LOGDIR}/progress.csv"
+    echo ""
+    if [ -f "${OPENAI_LOGDIR}/training_output.log" ]; then
+        echo "Last 30 lines of training output:"
+        tail -n 30 "${OPENAI_LOGDIR}/training_output.log"
+    fi
+    echo "=========================================="
+    exit $TRAIN_EXIT_CODE  # Preserve original exit code for debugging
 fi
 

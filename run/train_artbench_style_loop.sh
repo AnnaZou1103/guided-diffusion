@@ -156,37 +156,152 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
     echo "Job finished, checking status..."
     sleep 5  # Wait for filesystem sync
     
+    # Create error log directory
+    ERROR_LOG_DIR="${PROJECT_ROOT}/logs/artbench_${STYLE_NAME}_errors"
+    mkdir -p "$ERROR_LOG_DIR"
+    
+    # Get job exit status from SLURM
+    JOB_EXIT_CODE=""
+    if command -v sacct >/dev/null 2>&1; then
+        JOB_EXIT_CODE=$(sacct -j "$JOB_ID" --format=ExitCode --noheader --parsable2 2>/dev/null | head -1 | cut -d'|' -f1)
+    fi
+    
+    # Check job output files
+    JOB_OUT_FILE="artbench_train_${JOB_ID}.out"
+    JOB_ERR_FILE="artbench_train_${JOB_ID}.err"
+    
     # Record previous checkpoint
     PREV_CHECKPOINT="$LATEST_CHECKPOINT"
     LATEST_CHECKPOINT=$(ls -t "$LOG_DIR"/model*.pt 2>/dev/null | head -n 1)
     
+    # Parse exit code (format: "EXIT_CODE:SIGNAL" or just "EXIT_CODE")
+    EXIT_CODE_NUM=""
+    if [ -n "$JOB_EXIT_CODE" ]; then
+        # Extract exit code number (before colon)
+        EXIT_CODE_NUM=$(echo "$JOB_EXIT_CODE" | cut -d':' -f1)
+    fi
+    
+    # Check job exit status and log errors
+    # Exit code 2 means time limit reached (normal, should continue)
+    # Exit code 0 means success (check if training completed)
+    # Other exit codes mean failure
+    JOB_FAILED=false
+    if [ -n "$EXIT_CODE_NUM" ] && [ "$EXIT_CODE_NUM" != "0" ] && [ "$EXIT_CODE_NUM" != "2" ]; then
+        JOB_FAILED=true
+        echo ""
+        echo "=========================================="
+        echo "Job $JOB_ID failed with exit code: $JOB_EXIT_CODE"
+        echo "=========================================="
+    elif [ "$EXIT_CODE_NUM" = "2" ]; then
+        echo ""
+        echo "Job $JOB_ID reached time limit (exit code: 2). This is normal, will continue..."
+    fi
+    
     # Check if new checkpoint or progress was made
     if [ -z "$LATEST_CHECKPOINT" ]; then
+        JOB_FAILED=true
         echo ""
         echo "Warning: No checkpoint found after job completion."
-        echo "Please check job logs:"
-        echo "  tail -n 50 artbench_train_${JOB_ID}.out"
-        echo "  tail -n 50 artbench_train_${JOB_ID}.err"
-        exit 1
     elif [ "$LATEST_CHECKPOINT" == "$PREV_CHECKPOINT" ]; then
+        JOB_FAILED=true
         echo ""
         echo "Warning: No new checkpoint created. Training may have failed."
-        echo "Please check job logs:"
-        echo "  tail -n 50 artbench_train_${JOB_ID}.out"
-        echo "  tail -n 50 artbench_train_${JOB_ID}.err"
-        exit 1
     else
         NEW_STEP=$(basename "$LATEST_CHECKPOINT" | sed 's/model//; s/.pt//' | grep -o '[0-9]*')
         echo "New checkpoint created: step $NEW_STEP"
     fi
     
-    # Check job exit status (from output files)
-    if [ -f "artbench_train_${JOB_ID}.err" ]; then
-        ERROR_SIZE=$(stat -f%z "artbench_train_${JOB_ID}.err" 2>/dev/null || stat -c%s "artbench_train_${JOB_ID}.err" 2>/dev/null)
+    # If job failed, log detailed error information
+    if [ "$JOB_FAILED" = true ]; then
+        ERROR_LOG_FILE="${ERROR_LOG_DIR}/job_${JOB_ID}_error.log"
+        echo "==========================================" > "$ERROR_LOG_FILE"
+        echo "Error Log for Job $JOB_ID" >> "$ERROR_LOG_FILE"
+        echo "Time: $(date '+%Y-%m-%d %H:%M:%S')" >> "$ERROR_LOG_FILE"
+        echo "Iteration: $iteration" >> "$ERROR_LOG_FILE"
+        echo "Style: $STYLE_NAME" >> "$ERROR_LOG_FILE"
+        echo "==========================================" >> "$ERROR_LOG_FILE"
+        echo "" >> "$ERROR_LOG_FILE"
+        
+        # Log job exit code
+        if [ -n "$JOB_EXIT_CODE" ]; then
+            echo "SLURM Exit Code: $JOB_EXIT_CODE" >> "$ERROR_LOG_FILE"
+            echo "" >> "$ERROR_LOG_FILE"
+        fi
+        
+        # Log standard output (last 100 lines)
+        if [ -f "$JOB_OUT_FILE" ]; then
+            echo "=== Standard Output (last 100 lines) ===" >> "$ERROR_LOG_FILE"
+            tail -n 100 "$JOB_OUT_FILE" >> "$ERROR_LOG_FILE"
+            echo "" >> "$ERROR_LOG_FILE"
+        fi
+        
+        # Log error output (all content)
+        if [ -f "$JOB_ERR_FILE" ]; then
+            ERROR_SIZE=$(stat -f%z "$JOB_ERR_FILE" 2>/dev/null || stat -c%s "$JOB_ERR_FILE" 2>/dev/null)
+            if [ "$ERROR_SIZE" -gt 0 ]; then
+                echo "=== Error Output (all content) ===" >> "$ERROR_LOG_FILE"
+                cat "$JOB_ERR_FILE" >> "$ERROR_LOG_FILE"
+                echo "" >> "$ERROR_LOG_FILE"
+            fi
+        fi
+        
+        # Log training log file if exists
+        if [ -f "${LOG_DIR}/log.txt" ]; then
+            echo "=== Training Log (last 50 lines) ===" >> "$ERROR_LOG_FILE"
+            tail -n 50 "${LOG_DIR}/log.txt" >> "$ERROR_LOG_FILE"
+            echo "" >> "$ERROR_LOG_FILE"
+        fi
+        
+        # Log training output log if exists
+        if [ -f "${LOG_DIR}/training_output.log" ]; then
+            echo "=== Training Output Log (last 100 lines) ===" >> "$ERROR_LOG_FILE"
+            tail -n 100 "${LOG_DIR}/training_output.log" >> "$ERROR_LOG_FILE"
+            echo "" >> "$ERROR_LOG_FILE"
+        fi
+        
+        # Log progress CSV if exists
+        if [ -f "${LOG_DIR}/progress.csv" ]; then
+            echo "=== Progress CSV (last 20 lines) ===" >> "$ERROR_LOG_FILE"
+            tail -n 20 "${LOG_DIR}/progress.csv" >> "$ERROR_LOG_FILE"
+            echo "" >> "$ERROR_LOG_FILE"
+        fi
+        
+        # Display error summary
+        echo ""
+        echo "=========================================="
+        echo "Job $JOB_ID failed!"
+        echo "Error log saved to: $ERROR_LOG_FILE"
+        echo "=========================================="
+        echo ""
+        echo "Quick error summary:"
+        echo "--- Last 20 lines of output ---"
+        if [ -f "$JOB_OUT_FILE" ]; then
+            tail -n 20 "$JOB_OUT_FILE"
+        fi
+        echo ""
+        echo "--- Error output ---"
+        if [ -f "$JOB_ERR_FILE" ] && [ "$ERROR_SIZE" -gt 0 ]; then
+            cat "$JOB_ERR_FILE"
+        else
+            echo "(No error output file or file is empty)"
+        fi
+        echo ""
+        echo "For full error details, see: $ERROR_LOG_FILE"
+        echo "=========================================="
+        echo ""
+        echo "Do you want to continue to next iteration? (This will exit now for manual inspection)"
+        echo "To continue manually, check the error log and fix the issue, then run:"
+        echo "  sbatch run/train_artbench_style.sh $STYLE_NAME $ARTBENCH_IMAGES_DIR $PRETRAINED_MODEL"
+        exit 1
+    fi
+    
+    # Check for warnings in output (even if job succeeded)
+    if [ -f "$JOB_ERR_FILE" ]; then
+        ERROR_SIZE=$(stat -f%z "$JOB_ERR_FILE" 2>/dev/null || stat -c%s "$JOB_ERR_FILE" 2>/dev/null)
         if [ "$ERROR_SIZE" -gt 0 ]; then
             echo ""
-            echo "Warning: Job produced error output. Last 10 lines:"
-            tail -n 10 "artbench_train_${JOB_ID}.err"
+            echo "Note: Job produced some error output (may be warnings):"
+            tail -n 5 "artbench_train_${JOB_ID}.err"
         fi
     fi
     
