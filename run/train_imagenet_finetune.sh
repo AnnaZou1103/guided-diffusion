@@ -1,17 +1,17 @@
 #!/bin/bash
-#SBATCH --job-name=artbench_train
+#SBATCH --job-name=artbench_imagenet_train
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
 #SBATCH --time=2:00:00
-#SBATCH --error=artbench_train_%j.err
+#SBATCH --error=artbench_imagenet_train_%j.err
 #SBATCH --gres=gpu:1
 
-# Train a single ArtBench style from LSUN format
-# Usage: sbatch train_artbench_style.sh <style_name>
-# Example: sbatch train_artbench_style.sh impressionism
+# Fine-tune ImageNet 256x256 pretrained model on ArtBench style
+# Usage: sbatch train_imagenet_finetune.sh <style_name> [artbench_images_dir] [pretrained_model_path]
+# Example: sbatch train_imagenet_finetune.sh impressionism
 
 module load anaconda3
 module load cuda/12.1.1
@@ -52,11 +52,11 @@ if [ -n "$3" ]; then
         PRETRAINED_MODEL="$(cd "$(dirname "$3")" && pwd)/$(basename "$3" 2>/dev/null || echo "${PROJECT_ROOT}/$3")"
     fi
 else
-    # Default: use project root relative path
-    PRETRAINED_MODEL="${PROJECT_ROOT}/models/lsun_bedroom.pt"
+    # Default: use ImageNet 256x256 unconditional model
+    PRETRAINED_MODEL="${PROJECT_ROOT}/models/256x256_diffusion_uncond.pt"
 fi
 
-export OPENAI_LOGDIR="${PROJECT_ROOT}/logs/artbench_${STYLE_NAME}"
+export OPENAI_LOGDIR="${PROJECT_ROOT}/logs/artbench_imagenet_${STYLE_NAME}"
 
 export OPENAI_LOG_FORMAT="stdout,log,csv"
 export OPENAI_LOG_FORMAT_MPI="stdout,log,csv"
@@ -68,8 +68,9 @@ chmod 755 "$OPENAI_LOGDIR"
 # Assuming ~5000 steps can be trained in 2 hours, set save_interval to 2000 steps (safe)
 TRAIN_FLAGS="--lr_anneal_steps 200000 --batch_size 16 --microbatch 8 --lr 5e-5 --save_interval 2000 --weight_decay 0.0 --log_interval 10"
 
-# Model parameters: unconditional model (same as LSUN)
-MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond False --diffusion_steps 1000 --dropout 0.1 --image_size 256 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True --use_checkpoint True"
+# Model parameters: ImageNet 256x256 unconditional model configuration
+# Matches ImageNet 256x256 unconditional model: dropout 0.0 (not 0.1 like LSUN models)
+MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond False --diffusion_steps 1000 --dropout 0.0 --image_size 256 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True --use_checkpoint True"
 
 # Data directory (single style image directory)
 DATA_DIR="${ARTBENCH_IMAGES_DIR}/${STYLE_NAME}"
@@ -103,11 +104,13 @@ else
     else
         RESUME_CHECKPOINT=""
         echo "Warning: No checkpoint or pretrained model found, training from scratch"
+        echo "Expected pretrained model at: $PRETRAINED_MODEL"
     fi
 fi
 
 echo "=========================================="
-echo "Training ArtBench Style: ${STYLE_NAME}"
+echo "Fine-tuning ImageNet 256x256 Model on ArtBench"
+echo "Style: ${STYLE_NAME}"
 echo "=========================================="
 echo "Data directory: $DATA_DIR"
 echo "Model Parameters: $MODEL_FLAGS"
