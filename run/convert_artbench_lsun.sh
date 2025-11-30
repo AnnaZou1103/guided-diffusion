@@ -88,17 +88,44 @@ for style in "${STYLES[@]}"; do
         continue
     fi
     
+    # Create train and test subdirectories
+    STYLE_TRAIN_OUTPUT="${OUTPUT_DIR}/${style}/train"
+    STYLE_TEST_OUTPUT="${OUTPUT_DIR}/${style}/test"
+    
     echo "Converting ${style} from $LMDB_DIR..."
+    echo "  Training set: first 5000 images -> ${STYLE_TRAIN_OUTPUT}"
+    echo "  Test set: next 1000 images -> ${STYLE_TEST_OUTPUT}"
+    
+    # Convert training set (first 5000 images, indices 0-4999)
     python datasets/lsun_bedroom.py \
         --image-size "$IMAGE_SIZE" \
         --prefix "$style" \
+        --max-images 5000 \
+        --start-index 0 \
         "$LMDB_DIR" \
-        "$STYLE_OUTPUT"
+        "$STYLE_TRAIN_OUTPUT"
     
     if [ $? -eq 0 ]; then
-        echo "✓ Successfully converted ${style}"
+        echo "✓ Successfully converted training set for ${style}"
     else
-        echo "✗ Failed to convert ${style}"
+        echo "✗ Failed to convert training set for ${style}"
+        continue
+    fi
+    
+    # Convert test set (next 1000 images, indices 5000-5999)
+    python datasets/lsun_bedroom.py \
+        --image-size "$IMAGE_SIZE" \
+        --prefix "$style" \
+        --max-images 1000 \
+        --start-index 5000 \
+        "$LMDB_DIR" \
+        "$STYLE_TEST_OUTPUT"
+    
+    if [ $? -eq 0 ]; then
+        echo "✓ Successfully converted test set for ${style}"
+        echo "✓ Successfully converted ${style} (train: 5000, test: 1000)"
+    else
+        echo "✗ Failed to convert test set for ${style}"
     fi
     echo ""
 done
@@ -116,4 +143,16 @@ fi
 
 echo "Conversion completed!"
 echo "Converted images are in: $OUTPUT_DIR"
+echo ""
+echo "Directory structure:"
+echo "  $OUTPUT_DIR/"
+echo "    ├── impressionism/"
+echo "    │   ├── train/  (5000 training images)"
+echo "    │   └── test/    (1000 test images)"
+echo "    ├── romanticism/"
+echo "    │   ├── train/"
+echo "    │   └── test/"
+echo "    └── surrealism/"
+echo "        ├── train/"
+echo "        └── test/"
 

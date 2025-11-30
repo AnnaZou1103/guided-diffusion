@@ -71,13 +71,15 @@ TRAIN_FLAGS="--lr_anneal_steps 200000 --batch_size 16 --microbatch 8 --lr 5e-5 -
 # Model parameters: unconditional model (same as LSUN)
 MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond False --diffusion_steps 1000 --dropout 0.1 --image_size 256 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True --use_checkpoint True"
 
-# Data directory (single style image directory)
-DATA_DIR="${ARTBENCH_IMAGES_DIR}/${STYLE_NAME}"
+# Data directory (single style training directory)
+# Use train/ subdirectory to ensure only training images are used
+DATA_DIR="${ARTBENCH_IMAGES_DIR}/${STYLE_NAME}/train"
 
 # Check if data directory exists
 if [ ! -d "$DATA_DIR" ]; then
-    echo "Error: Data directory not found: $DATA_DIR"
+    echo "Error: Training data directory not found: $DATA_DIR"
     echo "Please run convert_artbench_lsun.sh first to convert LSUN format to images."
+    echo "The conversion script creates train/ and test/ subdirectories for each style."
     exit 1
 fi
 

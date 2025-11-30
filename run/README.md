@@ -26,16 +26,23 @@ datasets/artbench_lsun/
 ```
 
 **Output structure:**
-After conversion, images will be organized as:
+After conversion, images will be organized with train/test separation:
 ```
 artbench_images/  (or datasets/artbench_images/)
   ├── impressionism/
-  │   └── impressionism_*.png
+  │   ├── train/          (5000 training images)
+  │   │   └── impressionism_0000000.png to impressionism_0004999.png
+  │   └── test/            (1000 test images)
+  │       └── impressionism_0005000.png to impressionism_0005999.png
   ├── romanticism/
-  │   └── romanticism_*.png
+  │   ├── train/
+  │   └── test/
   └── surrealism/
-      └── surrealism_*.png
+      ├── train/
+      └── test/
 ```
+
+**Note:** The conversion script automatically separates training (first 5000) and test (next 1000) images for each style, following the ArtBench dataset structure.
 
 ---
 
@@ -79,7 +86,17 @@ guided-diffusion/
 │   └── ...
 ├── datasets/
 │   ├── artbench_lsun/         # Input: LSUN format data (tar files or lmdb dirs)
-│   └── artbench_images/        # Output: Converted image directories
+│   ├── artbench_images/        # Output: Converted image directories (with train/test split)
+│   │   ├── impressionism/
+│   │   │   ├── train/         # 5000 training images
+│   │   │   └── test/           # 1000 test images
+│   │   ├── romanticism/
+│   │   │   ├── train/
+│   │   │   └── test/
+│   │   └── surrealism/
+│   │       ├── train/
+│   │       └── test/
+│   └── artbench_reference/     # Reference batches for evaluation
 ├── logs/                      # Training logs and checkpoints
 │   ├── artbench_impressionism/
 │   ├── artbench_romanticism/
@@ -143,8 +160,10 @@ sbatch train_artbench_style.sh [style_name] [artbench_images_dir] [pretrained_mo
 
 **Example:**
 ```bash
-sbatch train_artbench_style.sh impressionism ./artbench_images models/lsun_bedroom.pt
+sbatch train_artbench_style.sh impressionism ./datasets/artbench_images models/lsun_bedroom.pt
 ```
+
+**Note:** The script automatically uses the `train/` subdirectory (5000 training images) for each style, ensuring the test set is not used during training.
 
 **Training Configuration:**
 - Target steps: 200,000
@@ -321,6 +340,82 @@ sbatch upsample_64-256:.sh
 
 ---
 
+## Evaluation Scripts
+
+### `create_artbench_reference.sh`
+
+**Purpose:** Creates a reference batch (.npz file) from ArtBench image directory for evaluation.
+
+**Usage:**
+```bash
+bash create_artbench_reference.sh [style_name] [artbench_images_dir] [num_images] [output_dir]
+```
+
+**Parameters:**
+- `style_name` (optional, default: `impressionism`) - ArtBench style name
+- `artbench_images_dir` (optional, default: `./datasets/artbench_images`) - Directory containing style image subdirectories
+- `num_images` (optional, default: `1000`) - Number of images to include in reference batch (ArtBench test set has 1000 images per style)
+- `output_dir` (optional, default: `./datasets/artbench_reference`) - Output directory for reference batch files
+
+**Example:**
+```bash
+bash create_artbench_reference.sh impressionism ./datasets/artbench_images 1000
+```
+
+**Output:**
+- Reference batch: `datasets/artbench_reference/reference_artbench_{style_name}.npz` (default)
+
+**Note:** 
+- This script automatically uses only the **test set images** (images from index 5000 onwards, assuming first 5000 are training images)
+- ArtBench dataset has 5,000 training images and 1,000 test images per style
+- The script uses `utils/create_reference_batch.py` with `--use_test_set` flag to ensure only test images are used for fair evaluation
+
+---
+
+## Evaluating Models
+
+To evaluate your finetuned ArtBench models:
+
+### 1. Generate Samples
+
+Generate 50,000 samples from your trained model:
+```bash
+sbatch sample_artbench_style.sh impressionism ./logs/artbench_impressionism/model200000.pt 50000
+```
+
+This creates: `results/artbench_impressionism/samples_50000x256x256x3.npz`
+
+### 2. Create Reference Batch
+
+Create a reference batch from the ArtBench **test set** (for fair evaluation):
+```bash
+bash create_artbench_reference.sh impressionism ./datasets/artbench_images 1000
+```
+
+This creates: `datasets/artbench_reference/reference_artbench_impressionism.npz`
+
+**Note:** The script automatically uses images from the `test/` subdirectory (created by `convert_artbench_lsun.sh`), ensuring the reference batch is from the test set, not the training set.
+
+### 3. Run Evaluation
+
+Run the evaluator to compute FID, sFID, Precision, Recall, and Inception Score:
+```bash
+cd evaluations
+pip install -r requirements.txt  # If not already installed
+python evaluator.py ../datasets/artbench_reference/reference_artbench_impressionism.npz ../results/artbench_impressionism/samples_50000x256x256x3.npz
+```
+
+**Output metrics:**
+- **Inception Score (IS)** - Quality and diversity of generated images
+- **FID** - Frechet Inception Distance (lower is better)
+- **sFID** - Spatial FID
+- **Precision** - Quality of generated samples (higher is better)
+- **Recall** - Diversity of generated samples (higher is better)
+
+**Note:** For proper evaluation, use the ArtBench reference batch (created from your training data) rather than LSUN bedroom reference, as ArtBench is a different distribution (artistic styles vs. real photos).
+
+---
+
 ## Common Parameters
 
 ### Model Flags
@@ -375,16 +470,3 @@ All scripts assume the following environment:
 If not using SLURM, you can modify the scripts to run directly with `bash` instead of `sbatch`.
 
 ---
-
-## Notes
-
-1. **Checkpoint Resumption:** Training scripts automatically detect and resume from the latest checkpoint in the log directory.
-
-2. **Time Limits:** SLURM scripts have time limits (typically 2 hours for training). If training is interrupted, simply resubmit the same script to continue.
-
-3. **Output Directories:** All scripts create necessary output directories automatically.
-
-4. **Model Paths:** Ensure pretrained models are downloaded and placed in the `models/` directory before running scripts.
-
-5. **Data Format:** Training scripts expect image directories where each image is a PNG file. The `convert_artbench_lsun.sh` script handles the conversion from LSUN format.
-
