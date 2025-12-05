@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
-#SBATCH --time=2:00:00
+#SBATCH --time=8:00:00
 #SBATCH --error=artbench_train_%j.err
 #SBATCH --gres=gpu:1
 
@@ -22,37 +22,33 @@ export OMPI_MCA_mtl=^ofi
 export OMPI_MCA_pml=ob1
 export OMPI_MCA_btl=self,tcp
 
-# Style name (passed as argument, uses default if not provided)
+# Style name
 STYLE_NAME=${1:-"surrealism"}
 
-# Get project root from current working directory (assumes running from project root)
-# When using sbatch, the working directory is preserved
+# Get project root from current working directory 
 PROJECT_ROOT="$(pwd)"
 SCRIPT_DIR="${PROJECT_ROOT}/run"
 
 # Configuration paths
-# Convert relative paths to absolute paths
 if [ -n "$2" ]; then
-    # Use provided path (convert to absolute if relative)
+    # Use provided artbench path
     if [[ "$2" = /* ]]; then
         ARTBENCH_IMAGES_DIR="$2"
     else
         ARTBENCH_IMAGES_DIR="$(cd "$2" && pwd 2>/dev/null || echo "${PROJECT_ROOT}/$2")"
     fi
 else
-    # Default: use datasets/artbench_images
     ARTBENCH_IMAGES_DIR="${PROJECT_ROOT}/datasets/artbench_images"
 fi
 
 if [ -n "$3" ]; then
-    # Use provided pretrained model path (convert to absolute if relative)
+    # Use provided pretrained model path
     if [[ "$3" = /* ]]; then
         PRETRAINED_MODEL="$3"
     else
         PRETRAINED_MODEL="$(cd "$(dirname "$3")" && pwd)/$(basename "$3" 2>/dev/null || echo "${PROJECT_ROOT}/$3")"
     fi
 else
-    # Default: use project root relative path
     PRETRAINED_MODEL="${PROJECT_ROOT}/models/lsun_bedroom.pt"
 fi
 
@@ -64,15 +60,13 @@ export OPENAI_LOG_FORMAT_MPI="stdout,log,csv"
 mkdir -p "$OPENAI_LOGDIR"
 chmod 755 "$OPENAI_LOGDIR"
 
-# Fine-tuning parameters: Reduce save interval to ensure at least one save within 2 hours
-# Assuming ~5000 steps can be trained in 2 hours, set save_interval to 2000 steps (safe)
+# Fine-tuning parameters:
 TRAIN_FLAGS="--lr_anneal_steps 200000 --batch_size 16 --microbatch 8 --lr 5e-5 --save_interval 2000 --weight_decay 0.0 --log_interval 10"
 
 # Model parameters: unconditional model (same as LSUN)
 MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond False --diffusion_steps 1000 --dropout 0.1 --image_size 256 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True --use_checkpoint True"
 
-# Data directory (single style training directory)
-# Use train/ subdirectory to ensure only training images are used
+# Single style training directory)
 DATA_DIR="${ARTBENCH_IMAGES_DIR}/${STYLE_NAME}/train"
 
 # Check if data directory exists

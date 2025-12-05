@@ -1,6 +1,7 @@
 # Run Scripts Documentation
 
 This directory contains scripts for data conversion, training, and sampling with the guided-diffusion models.
+For environment setup, check [README.md](../README.md) for details.
 
 ## Table of Contents
 
@@ -18,6 +19,7 @@ This directory contains scripts for data conversion, training, and sampling with
 Before training ArtBench style models, you need to convert LSUN format data to image directories.
 
 **Expected input structure:**
+Download the dataset from [Kaggle]()
 ```
 datasets/artbench_lsun/
   ├── impressionism_lmdb.tar
@@ -167,8 +169,8 @@ sbatch train_artbench_style.sh impressionism ./datasets/artbench_images models/l
 
 **Training Configuration:**
 - Target steps: 200,000
-- Batch size: 8
-- Microbatch: 4
+- Batch size: 16
+- Microbatch: 8
 - Learning rate: 1e-5
 - Image size: 256x256
 - Model: Unconditional diffusion model (same architecture as LSUN)
@@ -183,7 +185,7 @@ sbatch train_artbench_style.sh impressionism ./datasets/artbench_images models/l
 
 ---
 
-#### `train_imagenet_finetune.sh`
+#### `train_imagenet_artbench_style.sh`
 
 **Purpose:** Fine-tunes ImageNet 256x256 pretrained model on a specific ArtBench style.
 
@@ -205,6 +207,7 @@ sbatch train_imagenet_finetune.sh impressionism ./artbench_images models/256x256
 **Training Configuration:**
 - Target steps: 200,000
 - Batch size: 16
+- Microbatch: 8
 - Learning rate: 5e-5
 - Image size: 256x256
 - Model: ImageNet 256x256 unconditional architecture (dropout 0.0)
@@ -307,7 +310,7 @@ sbatch sample_256x256.sh
 
 ---
 
-#### `upsample_64-256:.sh`
+#### `upsample_64-256.sh`
 
 **Purpose:** Generates 64x64 samples and upsamples them to 256x256 using the upsampler model.
 
@@ -378,9 +381,9 @@ To evaluate your finetuned ArtBench models:
 
 ### 1. Generate Samples
 
-Generate 50,000 samples from your trained model:
+Generate 1000 samples from your trained model:
 ```bash
-sbatch sample_artbench_style.sh impressionism ./logs/artbench_impressionism/model200000.pt 50000
+sbatch sample_artbench_style.sh impressionism ./logs/artbench_impressionism/model200000.pt 1000
 ```
 
 This creates: `results/artbench_impressionism/samples_50000x256x256x3.npz`
@@ -411,51 +414,6 @@ python evaluator.py ../datasets/artbench_reference/reference_artbench_impression
 - **sFID** - Spatial FID
 - **Precision** - Quality of generated samples (higher is better)
 - **Recall** - Diversity of generated samples (higher is better)
-
-**Note:** For proper evaluation, use the ArtBench reference batch (created from your training data) rather than LSUN bedroom reference, as ArtBench is a different distribution (artistic styles vs. real photos).
-
----
-
-## Common Parameters
-
-### Model Flags
-
-Most scripts use model configuration flags. Common parameters include:
-
-- `--attention_resolutions` - Attention resolutions (e.g., `32,16,8`)
-- `--class_cond` - Class conditional (True/False)
-- `--diffusion_steps` - Number of diffusion steps (typically 1000)
-- `--dropout` - Dropout rate (0.0, 0.1)
-- `--image_size` - Image size (64, 128, 256, 512)
-- `--learn_sigma` - Learn sigma (True/False)
-- `--noise_schedule` - Noise schedule (`linear`, `cosine`)
-- `--num_channels` - Number of channels (192, 256)
-- `--num_head_channels` - Number of head channels (64)
-- `--num_res_blocks` - Number of residual blocks (2, 3)
-- `--resblock_updown` - Residual block up/down (True/False)
-- `--use_fp16` - Use FP16 (True/False)
-- `--use_scale_shift_norm` - Use scale shift norm (True/False)
-
-### Training Flags
-
-- `--batch_size` - Batch size
-- `--microbatch` - Microbatch size (-1 to disable)
-- `--lr` - Learning rate
-- `--lr_anneal_steps` - Learning rate annealing steps
-- `--save_interval` - Checkpoint save interval
-- `--log_interval` - Logging interval
-- `--weight_decay` - Weight decay
-- `--resume_checkpoint` - Path to checkpoint to resume from
-
-### Sampling Flags
-
-- `--batch_size` - Batch size for sampling
-- `--num_samples` - Total number of samples to generate
-- `--timestep_respacing` - Timestep respacing (e.g., `250`, `1000`, `ddim25`)
-- `--use_ddim` - Use DDIM (True/False)
-- `--clip_denoised` - Clip denoised (True/False)
-- `--classifier_scale` - Classifier guidance scale
-
 ---
 
 ## Environment Setup

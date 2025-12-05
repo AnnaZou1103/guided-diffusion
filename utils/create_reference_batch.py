@@ -1,9 +1,6 @@
 """
 Create a reference batch (.npz file) from ArtBench image directory for evaluation.
 
-This script loads images from a directory, resizes them to the target size,
-and saves them in the .npz format required by evaluator.py.
-
 Usage:
     python create_reference_batch.py --data_dir ./artbench_images/impressionism --output reference_impressionism.npz --num_images 10000 --image_size 256
 """
@@ -19,7 +16,6 @@ import glob
 def center_crop_arr(pil_image, image_size):
     """
     Center crop and resize image to target size.
-    Similar to guided_diffusion.image_datasets.center_crop_arr but returns uint8.
     """
     # Resize to maintain aspect ratio
     scale = image_size / min(*pil_image.size)
@@ -183,11 +179,11 @@ def main():
         test_start_idx=args.test_start_idx
     )
     
-    # Save as .npz file with 'arr_0' key (required by evaluator.py)
+    # Save as .npz file with 'arr_0' key 
     print(f"\nSaving to {args.output}...")
     np.savez_compressed(args.output, arr_0=images)
-    
-    # Verify the saved file
+
+
     print(f"Verifying saved file...")
     loaded = np.load(args.output)
     print(f"Saved file contains keys: {loaded.files}")
@@ -195,7 +191,7 @@ def main():
     print(f"Array dtype: {loaded['arr_0'].dtype}")
     print(f"Array value range: {loaded['arr_0'].min()} - {loaded['arr_0'].max()}")
     
-    print(f"\n✓ Successfully created reference batch: {args.output}")
+    print(f"\nSuccessfully created reference batch: {args.output}")
     print(f"  Shape: {images.shape}")
     print(f"  Size: {os.path.getsize(args.output) / (1024**2):.2f} MB")
 

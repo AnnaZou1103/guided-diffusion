@@ -3,7 +3,7 @@
 # Usage: bash create_artbench_reference.sh <style_name> [artbench_images_dir] [num_images] [output_dir]
 # Example: bash create_artbench_reference.sh impressionism ./datasets/artbench_images 1000
 # Output: datasets/artbench_reference/reference_artbench_{style_name}.npz (default)
-# Note: Automatically uses test set images (from index 5000 onwards, assuming first 5000 are training)
+# Note: Automatically uses test set images from index 5000 onwards
 
 STYLE_NAME=${1:-"impressionism"}
 ARTBENCH_IMAGES_DIR=${2:-"./datasets/artbench_images"}
@@ -13,7 +13,7 @@ NUM_IMAGES=${3:-1000}  # ArtBench test set has 1000 images per style
 OUTPUT_DIR="${4:-./datasets/artbench_reference}"
 OUTPUT_PATH="${OUTPUT_DIR}/reference_artbench_${STYLE_NAME}.npz"
 
-# Use test/ subdirectory (created by convert_artbench_lsun.sh)
+# Use test/ subdirectory
 STYLE_DIR="${ARTBENCH_IMAGES_DIR}/${STYLE_NAME}/test"
 
 if [ ! -d "$STYLE_DIR" ]; then
@@ -24,7 +24,7 @@ if [ ! -d "$STYLE_DIR" ]; then
 fi
 
 echo "=========================================="
-echo "Creating ArtBench Reference Batch (Test Set)"
+echo "Creating ArtBench Reference Batch from Test Set"
 echo "=========================================="
 echo "Style: $STYLE_NAME"
 echo "Test set directory: $STYLE_DIR"
@@ -36,7 +36,7 @@ echo ""
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Load all images from test/ directory (no need for --use_test_set since we're already in test/)
+# Load all images from test/ directory
 python utils/create_reference_batch.py \
     --data_dir "$STYLE_DIR" \
     --output "$OUTPUT_PATH" \
